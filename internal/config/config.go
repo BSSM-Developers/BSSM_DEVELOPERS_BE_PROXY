@@ -35,6 +35,7 @@ type RedisConfig struct {
 	Addr     string `mapstructure:"addr"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
+	PoolSize int    `mapstructure:"pool_size"`
 }
 
 type MongoDBConfig struct {
@@ -103,6 +104,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("queue.base_priority", 1.0)
 	v.SetDefault("queue.priority_increment", 0.2)
 	v.SetDefault("queue.max_priority", 3.0)
+
+	v.SetDefault("redis.pool_size", 100)
 
 	v.SetDefault("log.workers", 4)
 

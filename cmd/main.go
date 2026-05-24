@@ -191,6 +191,7 @@ func newRedis(cfg config.RedisConfig) *redis.Client {
 		Addr:     cfg.Addr,
 		Password: cfg.Password,
 		DB:       cfg.DB,
+		PoolSize: cfg.PoolSize,
 	})
 }
 
