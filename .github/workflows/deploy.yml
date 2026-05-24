@@ -1,0 +1,75 @@
+name: Deploy BSSM Dev Proxy (Go)
+
+on:
+  push:
+    branches: [ 'release-*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ vars.SVC }}-proxy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [ self-hosted ]
+
+    env:
+      CTID:      ${{ vars.DEV_CTID }}
+      SVC:       ${{ vars.SVC }}
+      APP_DIR:   ${{ vars.APP_DIR }}
+      BIN_NAME:  ${{ vars.BIN_NAME || 'proxy' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify inputs (fail fast)
+        run: |
+          : "${CTID:?CTID is empty}"
+          : "${SVC:?SVC is empty}"
+          : "${APP_DIR:?APP_DIR is empty}"
+          : "${BIN_NAME:?BIN_NAME is empty}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Go binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-s -w" -o "$BIN_NAME" ./cmd/...
+
+      - name: Push binary to CT
+        run: |
+          sudo /usr/sbin/pct push "$CTID" "./$BIN_NAME" "/tmp/$BIN_NAME"
+
+      - name: Deploy inside CT & restart
+        run: |
+          sudo /usr/sbin/pct exec "$CTID" -- bash -lc "
+            set -euo pipefail
+
+            APP_DIR='${APP_DIR}'
+            BIN_NAME='${BIN_NAME}'
+            SRC=\"/tmp/\$BIN_NAME\"
+            DST=\"\$APP_DIR/\$BIN_NAME\"
+
+            install -d -m 755 \"\$APP_DIR\"
+
+            if [ -f \"\$DST\" ]; then
+              cp -f \"\$DST\" \"\$DST.bak\" || true
+            fi
+
+            cp \"\$SRC\" \"\$DST.tmp\"
+            mv -f \"\$DST.tmp\" \"\$DST\"
+            rm -f \"\$SRC\"
+
+            chown bssm-dev:bssm-dev \"\$DST\"
+            chmod 750 \"\$DST\"
+
+            systemctl daemon-reload
+            systemctl restart \"${SVC}.service\"
+          "
