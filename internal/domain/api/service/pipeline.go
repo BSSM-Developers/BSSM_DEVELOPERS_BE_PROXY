@@ -7,7 +7,6 @@ import (
 
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/model"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/query"
-	logmodel "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/model"
 	logservice "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/service"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/requester"
 	"go.uber.org/zap"
@@ -129,8 +128,3 @@ func (p *Pipeline) releaseRequest(apiTokenID int64) {
 	}
 }
 
-// logDirection은 요청 방향에 따른 로그 Direction 상수다.
-var (
-	_ = logmodel.DirectionBrowserToServer
-	_ = logmodel.DirectionServerToServer
-)

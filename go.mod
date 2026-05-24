@@ -5,6 +5,7 @@ go 1.23
 require (
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.10.0
+	github.com/google/uuid v1.6.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/spf13/viper v1.19.0
