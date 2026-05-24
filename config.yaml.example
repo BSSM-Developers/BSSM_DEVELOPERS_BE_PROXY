@@ -1,0 +1,35 @@
+server:
+  port: "8080"
+
+mysql:
+  dsn: "user:password@tcp(localhost:3306)/bssm_dev?charset=utf8mb4&parseTime=True&loc=Local"
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+mongodb:
+  uri: "mongodb://localhost:27017"
+  database: "bssm_dev"
+
+cache:
+  local_ttl: 5m
+  redis_ttl: 10m
+
+queue:
+  max_inflight: 80
+  acquire_timeout: 1s
+  base_priority: 1.0
+  priority_increment: 0.2
+  max_priority: 3.0
+
+rate_limit:
+  threshold_multiplier: 200
+
+cors:
+  allowed_origins:
+    - "https://bssmdev.com"
+    - "https://dev.bssm-dev.com"
+    - "http://localhost"
+    - "https://localhost"
