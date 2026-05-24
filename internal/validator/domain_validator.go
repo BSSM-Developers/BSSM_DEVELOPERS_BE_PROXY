@@ -4,20 +4,50 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
+
+	gocache "github.com/patrickmn/go-cache"
 
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/apperrors"
 )
 
+// privateNetworks는 프로세스 시작 시 한 번만 파싱된다.
+var privateNetworks []*net.IPNet
+
+func init() {
+	cidrs := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"100.64.0.0/10",
+		"169.254.0.0/16",
+		"192.0.0.0/24",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		"240.0.0.0/4",
+		"0.0.0.0/8",
+		"fc00::/7",
+		"fe80::/10",
+		"::1/128",
+	}
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil {
+			privateNetworks = append(privateNetworks, network)
+		}
+	}
+}
+
 // DomainValidator는 SSRF 방어를 위한 도메인 URL 검증기다.
-// Java의 DomainValidator와 동일한 규칙을 적용한다:
-//  1. scheme이 https:// 여야 한다
-//  2. IP 직접 입력(IPv4/IPv6) 차단
-//  3. 내부 hostname 패턴 차단 (localhost, *.local 등)
-//  4. DNS 해석 후 resolved IP가 내부 대역이면 차단
-type DomainValidator struct{}
+// DNS 해석 결과를 인메모리 캐시(5분 TTL)에 저장해 반복 DNS I/O를 제거한다.
+type DomainValidator struct {
+	cache *gocache.Cache
+}
 
 func New() *DomainValidator {
-	return &DomainValidator{}
+	return &DomainValidator{
+		cache: gocache.New(5*time.Minute, 10*time.Minute),
+	}
 }
 
 // Validate는 domainURL을 검증하고 위반 시 ProxyError를 반환한다.
@@ -39,7 +69,18 @@ func (v *DomainValidator) Validate(domainURL string) error {
 	if err := validateHostname(hostname); err != nil {
 		return err
 	}
-	return validateResolvedIP(hostname)
+
+	// DNS 검증 결과 캐시 조회
+	if cached, ok := v.cache.Get(hostname); ok {
+		if cached == nil {
+			return nil
+		}
+		return cached.(error)
+	}
+
+	result := validateResolvedIP(hostname)
+	v.cache.Set(hostname, result, gocache.DefaultExpiration)
+	return result
 }
 
 var blockedHostnamePatterns = []string{
@@ -55,12 +96,10 @@ func validateHostname(hostname string) error {
 		return apperrors.ErrInvalidDomainURL
 	}
 
-	// IPv4 직접 입력 차단
 	if net.ParseIP(hostname) != nil {
 		return apperrors.ErrBlockedInternalDomain
 	}
 
-	// IPv6 직접 입력 (브래킷 포함) 차단
 	if strings.HasPrefix(hostname, "[") {
 		return apperrors.ErrBlockedInternalDomain
 	}
@@ -82,7 +121,6 @@ func validateHostname(hostname string) error {
 func validateResolvedIP(hostname string) error {
 	addrs, err := net.LookupHost(hostname)
 	if err != nil {
-		// DNS 해석 실패 = 존재하지 않는 도메인 → 차단
 		return apperrors.ErrInvalidDomainURL
 	}
 
@@ -98,33 +136,11 @@ func validateResolvedIP(hostname string) error {
 	return nil
 }
 
-// isPrivateIP는 IP가 내부 대역(RFC1918, 루프백, 링크로컬 등)인지 확인한다.
 func isPrivateIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true
 	}
-
-	private := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"100.64.0.0/10",   // CGNAT
-		"169.254.0.0/16",  // Link-local (AWS metadata 등)
-		"192.0.0.0/24",    // IETF Protocol
-		"198.51.100.0/24", // TEST-NET-2
-		"203.0.113.0/24",  // TEST-NET-3
-		"240.0.0.0/4",     // Reserved
-		"0.0.0.0/8",       // 현재 네트워크
-		"fc00::/7",        // IPv6 Unique local
-		"fe80::/10",       // IPv6 Link-local
-		"::1/128",         // IPv6 Loopback
-	}
-
-	for _, cidr := range private {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
+	for _, network := range privateNetworks {
 		if network.Contains(ip) {
 			return true
 		}
