@@ -13,9 +13,14 @@ type Config struct {
 	Redis     RedisConfig
 	MongoDB   MongoDBConfig
 	Cache     CacheConfig
+	Log       LogConfig
 	Queue     QueueConfig
 	RateLimit RateLimitConfig
 	CORS      CORSConfig
+}
+
+type LogConfig struct {
+	Workers int `mapstructure:"workers"`
 }
 
 type ServerConfig struct {
@@ -98,6 +103,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("queue.base_priority", 1.0)
 	v.SetDefault("queue.priority_increment", 0.2)
 	v.SetDefault("queue.max_priority", 3.0)
+
+	v.SetDefault("log.workers", 4)
 
 	v.SetDefault("rate_limit.threshold_multiplier", 200)
 

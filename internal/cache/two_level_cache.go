@@ -63,8 +63,8 @@ func (c *TwoLevelCache) GetOrFetch(ctx context.Context, key string, fetch func()
 		return json.Unmarshal(mustMarshal(result), dest)
 	}
 
-	c.redis.Set(ctx, key, serialized, c.redisTTL)
 	c.local.Set(key, serialized, gocache.DefaultExpiration)
+	go c.redis.Set(context.Background(), key, serialized, c.redisTTL)
 	c.logger.Debug("cache set", zap.String("key", key))
 
 	return json.Unmarshal(serialized, dest)

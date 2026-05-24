@@ -57,7 +57,7 @@ func main() {
 	domainQuery := query.NewDomainQueryService(domainRepo, cacheService)
 
 	// --- 로그 발행자 ---
-	logPublisher := logservice.NewLogPublisher(logRepo, logger)
+	logPublisher := logservice.NewLogPublisher(logRepo, logger, cfg.Log.Workers)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	logPublisher.Start(ctx)

@@ -24,44 +24,52 @@ const (
 
 // LogPublisher는 프록시 요청/응답 로그를 비동기로 MongoDB에 저장한다.
 // Java의 ProxyLogEventPublisher + ProxyLogEventListener에 대응한다.
-// 이벤트 기반 대신 버퍼드 채널로 비동기 처리한다.
+// 이벤트 기반 대신 버퍼드 채널 + 다중 worker goroutine으로 비동기 처리한다.
 type LogPublisher struct {
-	repo   logrepository.LogRepository
-	ch     chan *logmodel.ProxyLog
-	logger *zap.Logger
+	repo    logrepository.LogRepository
+	ch      chan *logmodel.ProxyLog
+	workers int
+	logger  *zap.Logger
 }
 
-func NewLogPublisher(repo logrepository.LogRepository, logger *zap.Logger) *LogPublisher {
+func NewLogPublisher(repo logrepository.LogRepository, logger *zap.Logger, workers int) *LogPublisher {
+	if workers <= 0 {
+		workers = 1
+	}
 	return &LogPublisher{
-		repo:   repo,
-		ch:     make(chan *logmodel.ProxyLog, logBufferSize),
-		logger: logger,
+		repo:    repo,
+		ch:      make(chan *logmodel.ProxyLog, logBufferSize),
+		workers: workers,
+		logger:  logger,
 	}
 }
 
-// Start는 로그를 비동기로 소비하는 워커 고루틴을 시작한다.
-// ctx가 취소되면 채널을 드레인하고 종료한다.
+// Start는 workers 수만큼 로그 소비 goroutine을 시작한다.
+// ctx가 취소되면 각 worker가 채널을 드레인하고 종료한다.
 func (p *LogPublisher) Start(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case log := <-p.ch:
-				if err := p.repo.Save(context.Background(), log); err != nil {
-					p.logger.Error("proxy log 저장 실패", zap.Error(err))
-				}
-			case <-ctx.Done():
-				// 남은 로그 드레인
-				for {
-					select {
-					case log := <-p.ch:
-						p.repo.Save(context.Background(), log)
-					default:
-						return
-					}
+	for i := 0; i < p.workers; i++ {
+		go p.runWorker(ctx)
+	}
+}
+
+func (p *LogPublisher) runWorker(ctx context.Context) {
+	for {
+		select {
+		case log := <-p.ch:
+			if err := p.repo.Save(context.Background(), log); err != nil {
+				p.logger.Error("proxy log 저장 실패", zap.Error(err))
+			}
+		case <-ctx.Done():
+			for {
+				select {
+				case log := <-p.ch:
+					p.repo.Save(context.Background(), log)
+				default:
+					return
 				}
 			}
 		}
-	}()
+	}
 }
 
 // PublishSuccess는 성공 응답 로그를 비동기로 발행한다.

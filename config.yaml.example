@@ -17,6 +17,9 @@ cache:
   local_ttl: 5m
   redis_ttl: 10m
 
+log:
+  workers: 4
+
 queue:
   max_inflight: 80
   acquire_timeout: 1s
