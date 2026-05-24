@@ -1,75 +1,71 @@
-name: Deploy BSSM Dev Proxy (Go)
+name: Docker Build & Deploy
 
 on:
   push:
-    branches: [ 'release-*' ]
-  workflow_dispatch:
+    branches:
+      - 'release-*'
+      - 'dev-*'
 
-concurrency:
-  group: deploy-${{ vars.SVC }}-proxy
-  cancel-in-progress: false
-
-permissions:
-  contents: read
+env:
+  PROXY_IMAGE: donghyunking/bssm-dev-proxy
 
 jobs:
-  deploy:
-    runs-on: [ self-hosted ]
-
-    env:
-      CTID:      ${{ vars.DEV_CTID }}
-      SVC:       ${{ vars.SVC }}
-      APP_DIR:   ${{ vars.APP_DIR }}
-      BIN_NAME:  ${{ vars.BIN_NAME || 'proxy' }}
-
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      env: ${{ steps.set-env.outputs.env }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify inputs (fail fast)
+      - name: Set deployment environment
+        id: set-env
         run: |
-          : "${CTID:?CTID is empty}"
-          : "${SVC:?SVC is empty}"
-          : "${APP_DIR:?APP_DIR is empty}"
-          : "${BIN_NAME:?BIN_NAME is empty}"
+          if [[ "${{ github.ref_name }}" == release-* ]]; then
+            echo "env=prod" >> $GITHUB_OUTPUT
+          else
+            echo "env=staging" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
         with:
-          go-version-file: go.mod
-          cache: true
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Go binary
+      - id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.PROXY_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,scope=proxy,mode=max
+
+  update-infra:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TARGET: ${{ needs.build.outputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BSSM-Developers/BSSM_DEVELOPERS_INFRA
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: Update proxy image digest
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -ldflags="-s -w" -o "$BIN_NAME" ./cmd/...
+          sed -i -E "s|donghyunking/bssm-dev-proxy@sha256:[a-f0-9]+|donghyunking/bssm-dev-proxy@${DIGEST}|g" \
+            ${TARGET}/proxy/deployment.yaml
 
-      - name: Push binary to CT
+      - name: Commit and push
         run: |
-          sudo /usr/sbin/pct push "$CTID" "./$BIN_NAME" "/tmp/$BIN_NAME"
-
-      - name: Deploy inside CT & restart
-        run: |
-          sudo /usr/sbin/pct exec "$CTID" -- bash -lc "
-            set -euo pipefail
-
-            APP_DIR='${APP_DIR}'
-            BIN_NAME='${BIN_NAME}'
-            SRC=\"/tmp/\$BIN_NAME\"
-            DST=\"\$APP_DIR/\$BIN_NAME\"
-
-            install -d -m 755 \"\$APP_DIR\"
-
-            if [ -f \"\$DST\" ]; then
-              cp -f \"\$DST\" \"\$DST.bak\" || true
-            fi
-
-            cp \"\$SRC\" \"\$DST.tmp\"
-            mv -f \"\$DST.tmp\" \"\$DST\"
-            rm -f \"\$SRC\"
-
-            chown bssm-dev:bssm-dev \"\$DST\"
-            chmod 750 \"\$DST\"
-
-            systemctl daemon-reload
-            systemctl restart \"${SVC}.service\"
-          "
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${TARGET}/proxy/deployment.yaml
+          git diff --staged --quiet && echo "변경 없음" && exit 0
+          git commit -m "chore :: [${TARGET}] proxy 이미지 업데이트 (${GITHUB_SHA::7})"
+          git push
