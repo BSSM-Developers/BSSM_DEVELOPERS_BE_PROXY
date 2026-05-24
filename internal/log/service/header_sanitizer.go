@@ -16,7 +16,7 @@ func SanitizeHeaders(headers map[string]string) map[string]string {
 	safe := make(map[string]string, len(headers))
 	for k, v := range headers {
 		if isSensitive(k) {
-			safe[k] = maskToken(v)
+			safe[k] = MaskToken(v)
 		} else {
 			safe[k] = v
 		}
@@ -34,9 +34,9 @@ func isSensitive(headerName string) bool {
 	return false
 }
 
-// maskToken은 토큰 값을 앞 3자 + *** + 뒤 3자 형식으로 마스킹한다.
+// MaskToken은 토큰 값을 앞 3자 + *** + 뒤 3자 형식으로 마스킹한다.
 // Java의 TokenMasker에 대응한다.
-func maskToken(value string) string {
+func MaskToken(value string) string {
 	if len(value) <= 6 {
 		return "***"
 	}
