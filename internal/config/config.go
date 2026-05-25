@@ -25,7 +25,8 @@ type LogConfig struct {
 }
 
 type ServerConfig struct {
-	Port string `mapstructure:"port"`
+	Port        string `mapstructure:"port"`
+	MaxBodyBytes int64  `mapstructure:"max_body_bytes"`
 }
 
 type MySQLConfig struct {
@@ -100,6 +101,7 @@ func Load() *Config {
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", "8080")
+	v.SetDefault("server.max_body_bytes", 10*1024*1024) // 10 MiB
 
 	v.SetDefault("mysql.max_open_conns", 50)
 	v.SetDefault("mysql.max_idle_conns", 10)

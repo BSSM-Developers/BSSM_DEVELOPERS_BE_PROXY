@@ -87,7 +87,7 @@ func main() {
 	prioritySvc := queue.NewPriorityService(redisClient, cfg.Queue)
 
 	// --- 핸들러 ---
-	proxyHandler := handler.NewProxyHandler(browserSvc, serverSvc, logger)
+	proxyHandler := handler.NewProxyHandler(browserSvc, serverSvc, logger, cfg.Server)
 	healthHandler := handler.NewHealthHandler(healthSvc)
 
 	// --- 미들웨어 ---

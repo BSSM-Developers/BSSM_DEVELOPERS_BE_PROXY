@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/apperrors"
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/config"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/service"
 	logservice "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/service"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/requester"
@@ -19,17 +20,24 @@ const secretHeader = "bssm-dev-secret"
 // ProxyHandler는 모든 프록시 요청을 수신하고 Browser/Server 서비스로 위임한다.
 // Java의 UseApiController에 대응한다.
 type ProxyHandler struct {
-	browserSvc *service.BrowserService
-	serverSvc  *service.ServerService
-	logger     *zap.Logger
+	browserSvc   *service.BrowserService
+	serverSvc    *service.ServerService
+	logger       *zap.Logger
+	maxBodyBytes int64
 }
 
 func NewProxyHandler(
 	browserSvc *service.BrowserService,
 	serverSvc *service.ServerService,
 	logger *zap.Logger,
+	serverCfg config.ServerConfig,
 ) *ProxyHandler {
-	return &ProxyHandler{browserSvc: browserSvc, serverSvc: serverSvc, logger: logger}
+	return &ProxyHandler{
+		browserSvc:   browserSvc,
+		serverSvc:    serverSvc,
+		logger:       logger,
+		maxBodyBytes: serverCfg.MaxBodyBytes,
+	}
 }
 
 // Handle은 모든 HTTP 메서드의 프록시 요청을 처리한다.
@@ -41,9 +49,16 @@ func (h *ProxyHandler) Handle(c *gin.Context) {
 	}
 	secretKey := c.GetHeader(secretHeader)
 
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, h.maxBodyBytes+1))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "요청 본문 읽기 실패"})
+		return
+	}
+	if int64(len(body)) > h.maxBodyBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"statusCode": http.StatusRequestEntityTooLarge,
+			"message":    "요청 바디가 허용 크기를 초과했습니다",
+		})
 		return
 	}
 
