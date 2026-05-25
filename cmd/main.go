@@ -141,12 +141,6 @@ func newRouter(
 	r.Use(queueMW.Handle)
 
 	r.POST("/healthy", healthHandler.Check)
-
-	// 명시적 경로 우선 등록 후 catch-all 등록
-	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
-		r.Handle(method, "/proxy-browser/*path", proxyHandler.Handle)
-		r.Handle(method, "/proxy-server/*path", proxyHandler.Handle)
-	}
 	r.NoRoute(proxyHandler.Handle)
 
 	return r
