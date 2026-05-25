@@ -85,7 +85,12 @@ func writeError(c *gin.Context, err error) {
 	}
 	var extErr *apperrors.ExternalAPIError
 	if errors.As(err, &extErr) {
-		c.JSON(extErr.StatusCode, errorResponse(&extErr.ProxyError))
+		c.JSON(extErr.UpstreamStatusCode, gin.H{
+			"statusCode":         extErr.UpstreamStatusCode,
+			"message":            extErr.Message,
+			"upstreamStatusCode": extErr.UpstreamStatusCode,
+			"upstreamBody":       extErr.UpstreamBody,
+		})
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"statusCode": 500, "message": "Internal server error"})
