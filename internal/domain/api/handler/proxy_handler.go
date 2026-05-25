@@ -86,10 +86,10 @@ func writeError(c *gin.Context, err error) {
 	var extErr *apperrors.ExternalAPIError
 	if errors.As(err, &extErr) {
 		c.JSON(extErr.UpstreamStatusCode, gin.H{
-			"statusCode":         extErr.UpstreamStatusCode,
-			"message":            extErr.Message,
-			"upstreamStatusCode": extErr.UpstreamStatusCode,
-			"upstreamBody":       extErr.UpstreamBody,
+			"statusCode":    extErr.UpstreamStatusCode,
+			"message":       extErr.Message,
+			"apiStatusCode": extErr.UpstreamStatusCode,
+			"apiBody":       extErr.UpstreamBody,
 		})
 		return
 	}
