@@ -10,14 +10,11 @@ env:
   PROXY_IMAGE: donghyunking/bssm-dev-proxy
 
 jobs:
-  build:
+  check-duplicate:
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.push.outputs.digest }}
       env: ${{ steps.set-env.outputs.env }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Set deployment environment
         id: set-env
         run: |
@@ -26,6 +23,30 @@ jobs:
           else
             echo "env=staging" >> $GITHUB_OUTPUT
           fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: BSSM-Developers/BSSM_DEVELOPERS_INFRA
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: Fail if branch already deployed
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          TARGET="${{ steps.set-env.outputs.env }}"
+          MARKER_FILE="${TARGET}/proxy/.deployed-branches"
+          if [ -f "$MARKER_FILE" ] && grep -qxF "$BRANCH" "$MARKER_FILE"; then
+            echo "::error::Branch '${BRANCH}'은(는) ${TARGET} 환경에 이미 배포되었습니다. 중복 배포를 방지하기 위해 워크플로우를 종료합니다."
+            exit 1
+          fi
+
+  build:
+    needs: check-duplicate
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      env: ${{ needs.check-duplicate.outputs.env }}
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
@@ -63,9 +84,12 @@ jobs:
 
       - name: Commit and push
         run: |
+          BRANCH="${{ github.ref_name }}"
+          MARKER_FILE="${TARGET}/proxy/.deployed-branches"
+          echo "$BRANCH" >> "$MARKER_FILE"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ${TARGET}/proxy/deployment.yaml
+          git add ${TARGET}/proxy/deployment.yaml "$MARKER_FILE"
           git diff --staged --quiet && echo "변경 없음" && exit 0
           git commit -m "chore :: [${TARGET}] proxy 이미지 업데이트 (${GITHUB_SHA::7})"
           git push
