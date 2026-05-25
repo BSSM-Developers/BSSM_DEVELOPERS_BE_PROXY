@@ -72,7 +72,7 @@ func main() {
 		logger.Warn("rate limit 비활성화 상태로 실행 중")
 		rateLimiter = service.NewNoopRateLimiter()
 	}
-	tokenStateSvc := service.NewTokenStateService(tokenRepo, logger)
+	tokenStateSvc := service.NewTokenStateService(tokenRepo, cacheService, logger)
 
 	pipeline := service.NewPipeline(
 		tokenQuery, usageQuery, httpRequester,

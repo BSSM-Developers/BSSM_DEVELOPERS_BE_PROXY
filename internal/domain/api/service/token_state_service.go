@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/cache"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/model"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/repository"
 	"go.uber.org/zap"
@@ -13,11 +14,12 @@ import (
 // Java의 ApiTokenStateUpdateService에 대응한다.
 type TokenStateService struct {
 	repo   repository.TokenRepository
+	cache  cache.Service
 	logger *zap.Logger
 }
 
-func NewTokenStateService(repo repository.TokenRepository, logger *zap.Logger) *TokenStateService {
-	return &TokenStateService{repo: repo, logger: logger}
+func NewTokenStateService(repo repository.TokenRepository, cache cache.Service, logger *zap.Logger) *TokenStateService {
+	return &TokenStateService{repo: repo, cache: cache, logger: logger}
 }
 
 // TransitionState는 현재 상태에서 다음 단계로 전환한다.
@@ -39,6 +41,16 @@ func (s *TokenStateService) TransitionState(ctx context.Context, apiTokenID int6
 
 	if err := s.repo.Save(ctx, token); err != nil {
 		return "", err
+	}
+
+	// BLOCKED 전환 시 캐시 즉시 무효화 — TTL 내 차단 우회 방지
+	if next == model.StateBlocked {
+		if err := s.cache.Evict(ctx, cache.ApiTokenKey(token.ApiTokenUUID)); err != nil {
+			s.logger.Warn("BLOCKED 토큰 캐시 evict 실패",
+				zap.Int64("apiTokenId", apiTokenID),
+				zap.Error(err),
+			)
+		}
 	}
 
 	s.logger.Warn("API 토큰 상태 변경",
