@@ -65,7 +65,13 @@ func main() {
 	// --- 도메인 서비스 ---
 	domainValidator := validator.New()
 	httpRequester := requester.NewHTTPRequester(domainValidator)
-	rateLimiter := service.NewRedisRateLimiter(redisClient, cfg.RateLimit)
+	var rateLimiter service.RateLimiter
+	if cfg.RateLimit.Enabled {
+		rateLimiter = service.NewRedisRateLimiter(redisClient, cfg.RateLimit)
+	} else {
+		logger.Warn("rate limit 비활성화 상태로 실행 중")
+		rateLimiter = service.NewNoopRateLimiter()
+	}
 	tokenStateSvc := service.NewTokenStateService(tokenRepo, logger)
 
 	pipeline := service.NewPipeline(

@@ -57,7 +57,8 @@ type QueueConfig struct {
 }
 
 type RateLimitConfig struct {
-	ThresholdMultiplier int `mapstructure:"threshold_multiplier"`
+	Enabled             bool `mapstructure:"enabled"`
+	ThresholdMultiplier int  `mapstructure:"threshold_multiplier"`
 }
 
 type CORSConfig struct {
@@ -109,6 +110,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("log.workers", 4)
 
+	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.threshold_multiplier", 200)
 
 	v.SetDefault("cors.allowed_origins", []string{

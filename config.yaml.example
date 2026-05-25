@@ -29,6 +29,7 @@ queue:
   max_priority: 3.0
 
 rate_limit:
+  enabled: true          # dev 환경에서는 false로 설정
   threshold_multiplier: 200
 
 cors:
