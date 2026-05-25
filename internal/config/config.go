@@ -28,7 +28,10 @@ type ServerConfig struct {
 }
 
 type MySQLConfig struct {
-	DSN string `mapstructure:"dsn"`
+	DSN             string        `mapstructure:"dsn"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
 }
 
 type RedisConfig struct {
@@ -96,6 +99,10 @@ func Load() *Config {
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", "8080")
+
+	v.SetDefault("mysql.max_open_conns", 50)
+	v.SetDefault("mysql.max_idle_conns", 10)
+	v.SetDefault("mysql.conn_max_lifetime", 5*time.Minute)
 
 	v.SetDefault("cache.local_ttl", 5*time.Minute)
 	v.SetDefault("cache.redis_ttl", 10*time.Minute)

@@ -186,9 +186,9 @@ func newMySQL(cfg config.MySQLConfig, logger *zap.Logger) *gorm.DB {
 		logger.Fatal("MySQL 연결 실패", zap.Error(err))
 	}
 	sqlDB, _ := db.DB()
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	return db
 }
 
