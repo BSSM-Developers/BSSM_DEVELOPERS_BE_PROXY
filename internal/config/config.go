@@ -20,7 +20,8 @@ type Config struct {
 }
 
 type LogConfig struct {
-	Workers int `mapstructure:"workers"`
+	Workers int    `mapstructure:"workers"`
+	Level   string `mapstructure:"level"`
 }
 
 type ServerConfig struct {
@@ -116,6 +117,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.pool_size", 100)
 
 	v.SetDefault("log.workers", 4)
+	v.SetDefault("log.level", "info")
 
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.threshold_multiplier", 200)

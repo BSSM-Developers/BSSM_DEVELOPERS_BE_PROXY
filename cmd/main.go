@@ -34,7 +34,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logger := newLogger()
+	logger := newLogger(cfg.Log.Level)
 	defer logger.Sync()
 
 	// --- 인프라 초기화 ---
@@ -169,8 +169,14 @@ func newCORSMiddleware(cfg config.CORSConfig) gin.HandlerFunc {
 	return corsmw.New(corsConfig)
 }
 
-func newLogger() *zap.Logger {
-	logger, _ := zap.NewProduction()
+func newLogger(level string) *zap.Logger {
+	var zapLevel zap.AtomicLevel
+	if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
+		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	cfg := zap.NewProductionConfig()
+	cfg.Level = zapLevel
+	logger, _ := cfg.Build()
 	return logger
 }
 

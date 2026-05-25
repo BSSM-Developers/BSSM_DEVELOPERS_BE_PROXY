@@ -23,6 +23,7 @@ cache:
 
 log:
   workers: 4
+  level: info    # debug | info | warn | error
 
 queue:
   max_inflight: 80
