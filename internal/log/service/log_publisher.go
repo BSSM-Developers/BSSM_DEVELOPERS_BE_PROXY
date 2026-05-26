@@ -87,6 +87,34 @@ func (p *LogPublisher) PublishSuccess(
 	p.publish(log)
 }
 
+// PublishStreamResult는 스트리밍 완료 로그를 비동기로 발행한다.
+// 바디는 기록하지 않고 전송량(bytesTransferred)만 기록한다.
+// streamErr이 nil이거나 context 취소이면 SUCCESS로 기록한다.
+func (p *LogPublisher) PublishStreamResult(
+	direction string,
+	token *model.ApiToken,
+	info *model.RequestInfo,
+	r *http.Request,
+	statusCode int,
+	bytesTransferred int64,
+	streamErr error,
+	startedAt int64,
+) {
+	log := p.buildLog(direction, token, info, r, startedAt)
+	log.Response = &logmodel.ResponseLog{
+		Status:        statusCode,
+		Headers:       map[string]string{},
+		ContentLength: bytesTransferred,
+	}
+	if streamErr != nil {
+		log.Result = logmodel.ResultError
+		log.Error = buildErrorLog(streamErr)
+	} else {
+		log.Result = logmodel.ResultSuccess
+	}
+	p.publish(log)
+}
+
 // PublishError는 에러 응답 로그를 비동기로 발행한다.
 func (p *LogPublisher) PublishError(
 	direction string,

@@ -15,6 +15,7 @@ type Config struct {
 	Cache     CacheConfig
 	Log       LogConfig
 	Queue     QueueConfig
+	Stream    StreamConfig
 	RateLimit RateLimitConfig
 	CORS      CORSConfig
 }
@@ -54,11 +55,17 @@ type CacheConfig struct {
 }
 
 type QueueConfig struct {
-	MaxInflight    int           `mapstructure:"max_inflight"`
-	AcquireTimeout time.Duration `mapstructure:"acquire_timeout"`
-	BasePriority   float64       `mapstructure:"base_priority"`
-	PriorityIncrement float64    `mapstructure:"priority_increment"`
-	MaxPriority    float64       `mapstructure:"max_priority"`
+	MaxInflight       int           `mapstructure:"max_inflight"`
+	AcquireTimeout    time.Duration `mapstructure:"acquire_timeout"`
+	BasePriority      float64       `mapstructure:"base_priority"`
+	PriorityIncrement float64       `mapstructure:"priority_increment"`
+	MaxPriority       float64       `mapstructure:"max_priority"`
+}
+
+type StreamConfig struct {
+	Queue           QueueConfig   `mapstructure:"queue"`
+	MaxBytesPerConn int64         `mapstructure:"max_bytes_per_conn"`
+	MaxDuration     time.Duration `mapstructure:"max_duration"`
 }
 
 type RateLimitConfig struct {
@@ -115,6 +122,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("queue.base_priority", 1.0)
 	v.SetDefault("queue.priority_increment", 0.2)
 	v.SetDefault("queue.max_priority", 3.0)
+
+	v.SetDefault("stream.queue.max_inflight", 10)
+	v.SetDefault("stream.queue.acquire_timeout", 3*time.Second)
+	v.SetDefault("stream.queue.base_priority", 1.0)
+	v.SetDefault("stream.queue.priority_increment", 0.2)
+	v.SetDefault("stream.queue.max_priority", 3.0)
+	v.SetDefault("stream.max_bytes_per_conn", int64(100*1024*1024))
+	v.SetDefault("stream.max_duration", 5*time.Minute)
 
 	v.SetDefault("redis.pool_size", 100)
 
