@@ -12,32 +12,35 @@ import (
 	"go.uber.org/zap"
 )
 
+// StreamSession은 스트리밍 파이프라인 실행 결과다.
+// 핸들러는 io.Copy 완료 후 반드시 Complete를 호출해야 한다.
+type StreamSession struct {
+	Response *requester.StreamResponse
+	// Complete는 스트리밍 완료 시 로그를 발행하고 rate limit 카운터를 감소시킨다.
+	// streamErr이 nil이면 SUCCESS, 아니면 ERROR로 기록한다.
+	Complete func(bytesTransferred int64, streamErr error)
+}
 
-// TokenValidator는 브라우저/서버 각 접근 방식의 검증 로직을 주입받는 함수 타입이다.
-// Java의 Function<ApiTokenR2dbc, Mono<Void>> tokenValidator에 대응한다.
-type TokenValidator func(ctx context.Context, token *model.ApiToken) error
-
-// Pipeline은 프록시 요청의 공통 실행 흐름을 정의한다.
-// 토큰 조회 → 접근 검증 → 차단 확인 → 사용량 조회 → 외부 API 호출 → 로그 발행
-// Java의 ApiProxyPipeline에 대응한다.
-type Pipeline struct {
+// StreamPipeline은 스트리밍 프록시 요청의 공통 실행 흐름을 정의한다.
+// Pipeline과 달리 응답 바디를 버퍼링하지 않고 io.ReadCloser로 반환한다.
+type StreamPipeline struct {
 	tokenQuery   *query.TokenQueryService
 	usageQuery   *query.UsageQueryService
-	httpReq      requester.Requester
+	httpReq      requester.StreamRequester
 	logPublisher *logservice.LogPublisher
 	tracker      rateLimitTracker
 }
 
-func NewPipeline(
+func NewStreamPipeline(
 	tokenQuery *query.TokenQueryService,
 	usageQuery *query.UsageQueryService,
-	httpReq requester.Requester,
+	httpReq requester.StreamRequester,
 	logPublisher *logservice.LogPublisher,
 	rateLimiter RateLimiter,
 	stateSvc *TokenStateService,
 	logger *zap.Logger,
-) *Pipeline {
-	return &Pipeline{
+) *StreamPipeline {
+	return &StreamPipeline{
 		tokenQuery:   tokenQuery,
 		usageQuery:   usageQuery,
 		httpReq:      httpReq,
@@ -46,55 +49,49 @@ func NewPipeline(
 	}
 }
 
-// Execute는 브라우저/서버 공통 프록시 파이프라인을 실행한다.
-// validator는 호출자(BrowserService/ServerService)가 주입하는 접근 검증 전략이다.
-func (p *Pipeline) Execute(
+// Execute는 스트리밍 프록시 파이프라인을 실행한다.
+// 성공 시 StreamSession을 반환하며, 핸들러가 io.Copy 후 Complete를 호출해야 로그가 발행된다.
+func (p *StreamPipeline) Execute(
 	ctx context.Context,
 	clientID string,
 	info *model.RequestInfo,
 	r *http.Request,
 	direction string,
 	validator TokenValidator,
-) (*requester.ProxyResponse, error) {
+) (*StreamSession, error) {
 	startedAt := time.Now().UnixMilli()
 
-	// 토큰 조회
 	token, err := p.tokenQuery.FindByClientID(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 접근 방식별 검증 (브라우저: Origin, 서버: SecretKey)
 	if err := validator(ctx, token); err != nil {
 		return nil, err
 	}
 
-	// 차단 상태 확인
 	if err := token.ValidateNotBlocked(); err != nil {
 		return nil, err
 	}
 
-	// 비동기: Rate limit 카운터 증가 + 상태 전환 검사
 	p.tracker.trackAsync(token.ApiTokenID)
 
-	// 사용 가능한 엔드포인트 조회
 	usage, err := p.usageQuery.FindByTokenAndEndpoint(ctx, token.ApiTokenID, info.Endpoint)
 	if err != nil {
 		return nil, err
 	}
 
-	// 외부 API 호출
-	resp, err := p.httpReq.Request(ctx, usage.Domain, info)
-
-	// 비동기: 동시 요청 수 감소
-	p.tracker.releaseAsync(token.ApiTokenID)
-
+	resp, err := p.httpReq.RequestStream(ctx, usage.Domain, info)
 	if err != nil {
 		p.logPublisher.PublishError(direction, token, info, r, err, startedAt)
+		p.tracker.releaseAsync(token.ApiTokenID)
 		return nil, err
 	}
 
-	p.logPublisher.PublishSuccess(direction, token, info, r, resp, startedAt)
-	return resp, nil
-}
+	complete := func(bytesTransferred int64, streamErr error) {
+		p.logPublisher.PublishStreamResult(direction, token, info, r, resp.StatusCode, bytesTransferred, streamErr, startedAt)
+		p.tracker.releaseAsync(token.ApiTokenID)
+	}
 
+	return &StreamSession{Response: resp, Complete: complete}, nil
+}

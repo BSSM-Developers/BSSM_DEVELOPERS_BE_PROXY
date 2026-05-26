@@ -82,16 +82,29 @@ func main() {
 	serverSvc := service.NewServerService(pipeline)
 	healthSvc := service.NewHealthService(httpRequester, domainValidator)
 
+	streamRequester := requester.NewHTTPStreamRequester(domainValidator)
+	streamPipeline := service.NewStreamPipeline(
+		tokenQuery, usageQuery, streamRequester,
+		logPublisher, rateLimiter, tokenStateSvc, logger,
+	)
+	browserStreamSvc := service.NewBrowserStreamService(domainQuery, streamPipeline)
+	serverStreamSvc := service.NewServerStreamService(serverSvc, streamPipeline)
+
 	// --- 큐 ---
 	requestQueue := queue.NewHRNQueue(cfg.Queue)
+	streamQueue := queue.NewHRNQueue(cfg.Stream.Queue)
 	prioritySvc := queue.NewPriorityService(redisClient, cfg.Queue)
 
 	// --- 핸들러 ---
-	proxyHandler := handler.NewProxyHandler(browserSvc, serverSvc, logger, cfg.Server)
+	proxyHandler := handler.NewProxyHandler(
+		browserSvc, serverSvc,
+		browserStreamSvc, serverStreamSvc,
+		logger, cfg.Server, cfg.Stream,
+	)
 	healthHandler := handler.NewHealthHandler(healthSvc)
 
 	// --- 미들웨어 ---
-	queueMW := middleware.NewQueueMiddleware(requestQueue, prioritySvc, logger)
+	queueMW := middleware.NewQueueMiddleware(requestQueue, streamQueue, prioritySvc, logger)
 	errorMW := middleware.NewErrorMiddleware(logger)
 
 	// --- Gin 라우터 ---

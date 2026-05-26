@@ -69,4 +69,8 @@ var (
 	ErrUnsupportedBasePath = &ProxyError{
 		Code: "UNSUPPORTED_PROXY_BASE_PATH", StatusCode: 400, Message: "지원하지 않는 프록시 경로입니다.",
 	}
+	ErrStreamNotSupported = &ProxyError{
+		Code: "STREAM_NOT_SUPPORTED", StatusCode: 502,
+		Message: "업스트림이 text/event-stream 응답을 반환하지 않았습니다.",
+	}
 )

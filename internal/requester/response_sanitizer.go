@@ -1,6 +1,7 @@
 package requester
 
 import (
+	"io"
 	"net/http"
 	"strings"
 
@@ -42,11 +43,19 @@ var excludedResponseHeaders = map[string]struct{}{
 	"content-disposition":              {},
 }
 
-// ProxyResponse는 외부 API 응답을 담는 구조체다.
+// ProxyResponse는 버퍼링된 외부 API 응답을 담는 구조체다.
 type ProxyResponse struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+}
+
+// StreamResponse는 스트리밍 외부 API 응답을 담는 구조체다.
+// Body는 io.ReadCloser로, 호출자가 반드시 닫아야 한다.
+type StreamResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       io.ReadCloser
 }
 
 // sanitize는 응답 Content-Type을 검증하고 hop-by-hop 헤더를 제거한다.
@@ -54,9 +63,32 @@ func sanitize(resp *http.Response, body []byte) (*ProxyResponse, error) {
 	if err := validateContentType(resp.Header); err != nil {
 		return nil, err
 	}
+	return &ProxyResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    filterHeaders(resp.Header),
+		Body:       body,
+	}, nil
+}
 
+// sanitizeStream은 응답이 text/event-stream인지 검증하고 hop-by-hop 헤더를 제거한다.
+// 검증 성공 시 resp.Body 소유권이 StreamResponse로 이전된다.
+func sanitizeStream(resp *http.Response) (*StreamResponse, error) {
+	ct := resp.Header.Get("Content-Type")
+	baseType := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0]))
+	if baseType != "text/event-stream" {
+		return nil, apperrors.ErrStreamNotSupported
+	}
+	return &StreamResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    filterHeaders(resp.Header),
+		Body:       resp.Body,
+	}, nil
+}
+
+// filterHeaders는 hop-by-hop 및 CORS 관련 헤더를 제거한 복사본을 반환한다.
+func filterHeaders(header http.Header) http.Header {
 	filtered := make(http.Header)
-	for name, values := range resp.Header {
+	for name, values := range header {
 		lower := strings.ToLower(name)
 		if _, blocked := hopByHopHeaders[lower]; blocked {
 			continue
@@ -66,12 +98,7 @@ func sanitize(resp *http.Response, body []byte) (*ProxyResponse, error) {
 		}
 		filtered[name] = values
 	}
-
-	return &ProxyResponse{
-		StatusCode: resp.StatusCode,
-		Headers:    filtered,
-		Body:       body,
-	}, nil
+	return filtered
 }
 
 func validateContentType(header http.Header) error {
