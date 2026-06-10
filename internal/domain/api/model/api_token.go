@@ -58,16 +58,14 @@ func (t *ApiToken) ValidateBrowserAccess(requestOrigin string, domains []TokenDo
 	return apperrors.ErrUnauthorizedDomain
 }
 
-// TransitionToNextState는 상태를 NORMAL→WARNING→BLOCKED 순으로 전환한다.
+// TransitionToNextState는 상태를 NORMAL→WARNING 순으로 자동 전환한다.
+// BLOCKED는 관리자 수동 처리 전용이므로 자동 전환하지 않는다.
 // 변경이 없으면 빈 문자열을 반환한다.
 func (t *ApiToken) TransitionToNextState() ApiTokenState {
 	switch t.State {
 	case StateNormal, "":
 		t.State = StateWarning
 		return StateWarning
-	case StateWarning:
-		t.State = StateBlocked
-		return StateBlocked
 	default:
 		return ""
 	}

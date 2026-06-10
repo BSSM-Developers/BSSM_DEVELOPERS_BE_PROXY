@@ -18,6 +18,7 @@ import (
 	logrepository "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/repository"
 	logservice "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/service"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/middleware"
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/notifier"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/queue"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/requester"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/validator"
@@ -34,7 +35,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logger := newLogger()
+	logger := newLogger(cfg.Log.Level)
 	defer logger.Sync()
 
 	// --- 인프라 초기화 ---
@@ -65,8 +66,15 @@ func main() {
 	// --- 도메인 서비스 ---
 	domainValidator := validator.New()
 	httpRequester := requester.NewHTTPRequester(domainValidator)
-	rateLimiter := service.NewRedisRateLimiter(redisClient, cfg.RateLimit)
-	tokenStateSvc := service.NewTokenStateService(tokenRepo, logger)
+	var rateLimiter service.RateLimiter
+	if cfg.RateLimit.Enabled {
+		rateLimiter = service.NewRedisRateLimiter(redisClient, cfg.RateLimit)
+	} else {
+		logger.Warn("rate limit 비활성화 상태로 실행 중")
+		rateLimiter = service.NewNoopRateLimiter()
+	}
+	ntfyNotifier := notifier.New(cfg.Ntfy, cfg.Server.PublicURL)
+	tokenStateSvc := service.NewTokenStateService(tokenRepo, cacheService, ntfyNotifier, logger)
 
 	pipeline := service.NewPipeline(
 		tokenQuery, usageQuery, httpRequester,
@@ -76,20 +84,34 @@ func main() {
 	serverSvc := service.NewServerService(pipeline)
 	healthSvc := service.NewHealthService(httpRequester, domainValidator)
 
+	streamRequester := requester.NewHTTPStreamRequester(domainValidator)
+	streamPipeline := service.NewStreamPipeline(
+		tokenQuery, usageQuery, streamRequester,
+		logPublisher, rateLimiter, tokenStateSvc, logger,
+	)
+	browserStreamSvc := service.NewBrowserStreamService(domainQuery, streamPipeline)
+	serverStreamSvc := service.NewServerStreamService(serverSvc, streamPipeline)
+
 	// --- 큐 ---
 	requestQueue := queue.NewHRNQueue(cfg.Queue)
+	streamQueue := queue.NewHRNQueue(cfg.Stream.Queue)
 	prioritySvc := queue.NewPriorityService(redisClient, cfg.Queue)
 
 	// --- 핸들러 ---
-	proxyHandler := handler.NewProxyHandler(browserSvc, serverSvc, logger)
+	proxyHandler := handler.NewProxyHandler(
+		browserSvc, serverSvc,
+		browserStreamSvc, serverStreamSvc,
+		logger, cfg.Server, cfg.Stream,
+	)
 	healthHandler := handler.NewHealthHandler(healthSvc)
+	webhookHandler := handler.NewWebhookHandler(tokenStateSvc, cfg.Ntfy.WebhookSecret, logger)
 
 	// --- 미들웨어 ---
-	queueMW := middleware.NewQueueMiddleware(requestQueue, prioritySvc, logger)
+	queueMW := middleware.NewQueueMiddleware(requestQueue, streamQueue, prioritySvc, logger)
 	errorMW := middleware.NewErrorMiddleware(logger)
 
 	// --- Gin 라우터 ---
-	r := newRouter(cfg, queueMW, errorMW, proxyHandler, healthHandler)
+	r := newRouter(cfg, queueMW, errorMW, proxyHandler, healthHandler, webhookHandler)
 
 	// --- 서버 시작 및 Graceful Shutdown ---
 	srv := &http.Server{
@@ -127,20 +149,18 @@ func newRouter(
 	errorMW *middleware.ErrorMiddleware,
 	proxyHandler *handler.ProxyHandler,
 	healthHandler *handler.HealthHandler,
+	webhookHandler *handler.WebhookHandler,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(newCORSMiddleware(cfg.CORS))
 	r.Use(errorMW.Handle)
-	r.Use(queueMW.Handle)
+
+	// 웹훅은 큐 미들웨어 없이 직접 처리
+	r.POST("/webhook/api/token/:tokenId/block", webhookHandler.BlockToken)
 
 	r.POST("/healthy", healthHandler.Check)
-
-	// 명시적 경로 우선 등록 후 catch-all 등록
-	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
-		r.Handle(method, "/proxy-browser/*path", proxyHandler.Handle)
-		r.Handle(method, "/proxy-server/*path", proxyHandler.Handle)
-	}
+	r.Use(queueMW.Handle)
 	r.NoRoute(proxyHandler.Handle)
 
 	return r
@@ -169,8 +189,14 @@ func newCORSMiddleware(cfg config.CORSConfig) gin.HandlerFunc {
 	return corsmw.New(corsConfig)
 }
 
-func newLogger() *zap.Logger {
-	logger, _ := zap.NewProduction()
+func newLogger(level string) *zap.Logger {
+	var zapLevel zap.AtomicLevel
+	if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
+		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	cfg := zap.NewProductionConfig()
+	cfg.Level = zapLevel
+	logger, _ := cfg.Build()
 	return logger
 }
 
@@ -180,9 +206,9 @@ func newMySQL(cfg config.MySQLConfig, logger *zap.Logger) *gorm.DB {
 		logger.Fatal("MySQL 연결 실패", zap.Error(err))
 	}
 	sqlDB, _ := db.DB()
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	return db
 }
 
