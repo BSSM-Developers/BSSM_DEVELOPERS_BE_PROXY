@@ -26,6 +26,10 @@ func (n *NoopRateLimiter) GetConcurrent(_ context.Context, _ int64) (int64, erro
 	return 0, nil
 }
 
+func (n *NoopRateLimiter) GetPeakConcurrent(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
+}
+
 func (n *NoopRateLimiter) CheckAndUpdateState(_ context.Context, _ int64, _ *TokenStateService) error {
 	return nil
 }

@@ -17,6 +17,9 @@ type RateLimiter interface {
 	// GetConcurrent는 현재 동시 요청 수를 반환한다.
 	GetConcurrent(ctx context.Context, apiTokenID int64) (int64, error)
 
+	// GetPeakConcurrent는 현재 분 버킷의 최대 동시 요청 수를 반환한다.
+	GetPeakConcurrent(ctx context.Context, apiTokenID int64) (int64, error)
+
 	// CheckAndUpdateState는 요청 수가 임계치를 초과하면 상태 전환을 요청한다.
 	CheckAndUpdateState(ctx context.Context, apiTokenID int64, stateSvc *TokenStateService) error
 }
