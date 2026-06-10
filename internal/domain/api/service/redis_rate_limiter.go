@@ -10,11 +10,25 @@ import (
 )
 
 const (
-	rateLimitKeyPrefix  = "api:ratelimit:"
-	concurrentKeyPrefix = "api:concurrent:"
-	bucketTTL           = 5 * time.Minute
-	concurrentTTL       = 10 * time.Second
+	rateLimitKeyPrefix      = "api:ratelimit:"
+	concurrentKeyPrefix     = "api:concurrent:"
+	peakConcurrentKeyPrefix = "api:concurrent:peak:"
+	bucketTTL               = 5 * time.Minute
+	concurrentTTL           = 10 * time.Second
 )
+
+// incrAndUpdatePeakScript는 concurrent 증가와 분 버킷 피크 갱신을 원자적으로 처리한다.
+// async 타이밍 문제로 스냅샷 concurrent가 0이 되어도 피크값은 보존된다.
+var incrAndUpdatePeakScript = redis.NewScript(`
+local cur = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+local peak = tonumber(redis.call('GET', KEYS[2]) or 0)
+if cur > peak then
+    redis.call('SET', KEYS[2], cur)
+    redis.call('EXPIRE', KEYS[2], ARGV[2])
+end
+return cur
+`)
 
 // RedisRateLimiter는 Redis String + INCR + TTL 방식으로 분 단위 요청 제한을 추적한다.
 // Java의 RedisApiRateLimiterService에 대응한다.
@@ -43,12 +57,16 @@ func (r *RedisRateLimiter) IncrementAndGet(ctx context.Context, apiTokenID int64
 }
 
 func (r *RedisRateLimiter) IncrementConcurrent(ctx context.Context, apiTokenID int64) (int64, error) {
-	key := concurrentKeyPrefix + fmt.Sprint(apiTokenID)
-	count, err := r.redis.Incr(ctx, key).Result()
+	concurrentKey := concurrentKeyPrefix + fmt.Sprint(apiTokenID)
+	peakKey := r.peakKey(apiTokenID)
+	count, err := incrAndUpdatePeakScript.Run(ctx, r.redis,
+		[]string{concurrentKey, peakKey},
+		int(concurrentTTL.Seconds()),
+		int(bucketTTL.Seconds()),
+	).Int64()
 	if err != nil {
 		return 0, err
 	}
-	r.redis.Expire(ctx, key, concurrentTTL)
 	return count, nil
 }
 
@@ -74,8 +92,17 @@ func (r *RedisRateLimiter) GetConcurrent(ctx context.Context, apiTokenID int64) 
 	return val, err
 }
 
+func (r *RedisRateLimiter) GetPeakConcurrent(ctx context.Context, apiTokenID int64) (int64, error) {
+	key := r.peakKey(apiTokenID)
+	val, err := r.redis.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return val, err
+}
+
 func (r *RedisRateLimiter) CheckAndUpdateState(ctx context.Context, apiTokenID int64, stateSvc *TokenStateService) error {
-	concurrent, err := r.GetConcurrent(ctx, apiTokenID)
+	peak, err := r.GetPeakConcurrent(ctx, apiTokenID)
 	if err != nil {
 		return err
 	}
@@ -89,12 +116,17 @@ func (r *RedisRateLimiter) CheckAndUpdateState(ctx context.Context, apiTokenID i
 		return err
 	}
 
-	threshold := concurrent * int64(r.thresholdMultiplier)
+	threshold := peak * int64(r.thresholdMultiplier)
 	if requestCount > threshold {
 		_, err = stateSvc.TransitionState(ctx, apiTokenID)
 		return err
 	}
 	return nil
+}
+
+func (r *RedisRateLimiter) peakKey(apiTokenID int64) string {
+	bucket := time.Now().Format("200601021504")
+	return fmt.Sprintf("%s%d:%s", peakConcurrentKeyPrefix, apiTokenID, bucket)
 }
 
 // bucketKey는 현재 분(minute)을 기준으로 버킷 키를 생성한다.
