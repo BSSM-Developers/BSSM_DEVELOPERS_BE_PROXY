@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/model"
 	"go.uber.org/zap"
 )
 
@@ -36,4 +37,29 @@ func (t *rateLimitTracker) releaseAsync(apiTokenID int64) {
 			t.logger.Warn("동시 요청 카운터 감소 실패", zap.Int64("tokenId", apiTokenID), zap.Error(err))
 		}
 	}()
+}
+
+// tryRecoverWarning은 WARNING TTL이 만료된 토큰을 NORMAL로 자동 복구한다.
+func (t *rateLimitTracker) tryRecoverWarning(ctx context.Context, token *model.ApiToken) {
+	if token.State != model.StateWarning {
+		return
+	}
+	active, err := t.rateLimiter.IsWarningActive(ctx, token.ApiTokenID)
+	if err != nil {
+		t.logger.Warn("WARNING 상태 TTL 확인 실패", zap.Int64("tokenId", token.ApiTokenID), zap.Error(err))
+		return
+	}
+	if active {
+		return
+	}
+	if err := t.stateSvc.RecoverToNormal(ctx, token); err != nil {
+		t.logger.Warn("WARNING 자동복구 실패", zap.Int64("tokenId", token.ApiTokenID), zap.Error(err))
+		return
+	}
+	t.logger.Info("WARNING 상태 자동복구 완료", zap.Int64("tokenId", token.ApiTokenID))
+}
+
+// checkClientIP는 클라이언트 IP별 분당 요청 수를 확인한다.
+func (t *rateLimitTracker) checkClientIP(ctx context.Context, apiTokenID int64, clientIP string) error {
+	return t.rateLimiter.CheckClientIP(ctx, apiTokenID, clientIP)
 }

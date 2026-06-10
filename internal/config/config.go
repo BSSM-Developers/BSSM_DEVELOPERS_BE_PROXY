@@ -18,6 +18,7 @@ type Config struct {
 	Stream    StreamConfig
 	RateLimit RateLimitConfig
 	CORS      CORSConfig
+	Ntfy      NtfyConfig
 }
 
 type LogConfig struct {
@@ -28,6 +29,7 @@ type LogConfig struct {
 type ServerConfig struct {
 	Port        string `mapstructure:"port"`
 	MaxBodyBytes int64  `mapstructure:"max_body_bytes"`
+	PublicURL   string `mapstructure:"public_url"`
 }
 
 type MySQLConfig struct {
@@ -69,12 +71,21 @@ type StreamConfig struct {
 }
 
 type RateLimitConfig struct {
-	Enabled             bool `mapstructure:"enabled"`
-	ThresholdMultiplier int  `mapstructure:"threshold_multiplier"`
+	Enabled             bool          `mapstructure:"enabled"`
+	ThresholdMultiplier int           `mapstructure:"threshold_multiplier"`
+	WarningTTL          time.Duration `mapstructure:"warning_ttl"`
+	IPRateLimitRPM      int64         `mapstructure:"ip_rate_limit_rpm"`
 }
 
 type CORSConfig struct {
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
+}
+
+type NtfyConfig struct {
+	Enabled       bool   `mapstructure:"enabled"`
+	ServerURL     string `mapstructure:"server_url"`
+	Topic         string `mapstructure:"topic"`
+	WebhookSecret string `mapstructure:"webhook_secret"`
 }
 
 func Load() *Config {
@@ -138,6 +149,14 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.threshold_multiplier", 200)
+	v.SetDefault("rate_limit.warning_ttl", 5*time.Minute)
+	v.SetDefault("rate_limit.ip_rate_limit_rpm", int64(120))
+
+	v.SetDefault("ntfy.enabled", false)
+	v.SetDefault("ntfy.server_url", "https://ntfy.sh")
+	v.SetDefault("ntfy.topic", "bssm-developers-blocked")
+	v.SetDefault("ntfy.webhook_secret", "")
+	v.SetDefault("server.public_url", "http://localhost:8080")
 
 	v.SetDefault("cors.allowed_origins", []string{
 		"https://bssmdev.com",

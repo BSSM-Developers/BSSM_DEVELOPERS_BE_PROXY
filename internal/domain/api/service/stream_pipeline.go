@@ -66,11 +66,21 @@ func (p *StreamPipeline) Execute(
 		return nil, err
 	}
 
+	// WARNING TTL 만료 시 NORMAL 자동복구
+	p.tracker.tryRecoverWarning(ctx, token)
+
 	if err := validator(ctx, token); err != nil {
 		return nil, err
 	}
 
+	// 차단 상태 확인 (관리자 수동 BLOCKED만 해당)
 	if err := token.ValidateNotBlocked(); err != nil {
+		return nil, err
+	}
+
+	// IP 단위 rate limit — 공격자 IP 차단, 동일 토큰 정상 유저 보호
+	clientIP := extractClientIP(r)
+	if err := p.tracker.checkClientIP(ctx, token.ApiTokenID, clientIP); err != nil {
 		return nil, err
 	}
 

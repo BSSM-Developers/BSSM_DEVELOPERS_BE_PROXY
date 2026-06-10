@@ -5,14 +5,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/apperrors"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/config"
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/model"
 	"github.com/redis/go-redis/v9"
 )
 
 const (
 	rateLimitKeyPrefix      = "api:ratelimit:"
+	ipRateLimitKeyPrefix    = "api:ratelimit:ip:"
 	concurrentKeyPrefix     = "api:concurrent:"
 	peakConcurrentKeyPrefix = "api:concurrent:peak:"
+	warningKeyPrefix        = "api:warning:"
 	bucketTTL               = 5 * time.Minute
 	concurrentTTL           = 10 * time.Second
 )
@@ -35,12 +39,16 @@ return cur
 type RedisRateLimiter struct {
 	redis               *redis.Client
 	thresholdMultiplier int
+	warningTTL          time.Duration
+	ipRateLimitRPM      int64
 }
 
 func NewRedisRateLimiter(redisClient *redis.Client, cfg config.RateLimitConfig) RateLimiter {
 	return &RedisRateLimiter{
 		redis:               redisClient,
 		thresholdMultiplier: cfg.ThresholdMultiplier,
+		warningTTL:          cfg.WarningTTL,
+		ipRateLimitRPM:      cfg.IPRateLimitRPM,
 	}
 }
 
@@ -101,6 +109,36 @@ func (r *RedisRateLimiter) GetPeakConcurrent(ctx context.Context, apiTokenID int
 	return val, err
 }
 
+func (r *RedisRateLimiter) IsWarningActive(ctx context.Context, apiTokenID int64) (bool, error) {
+	key := warningKeyPrefix + fmt.Sprint(apiTokenID)
+	err := r.redis.Get(ctx, key).Err()
+	if err == redis.Nil {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (r *RedisRateLimiter) CheckClientIP(ctx context.Context, apiTokenID int64, clientIP string) error {
+	if r.ipRateLimitRPM <= 0 {
+		return nil
+	}
+	key := fmt.Sprintf("%s%d:%s:%s", ipRateLimitKeyPrefix, apiTokenID, clientIP, time.Now().Format("200601021504"))
+	count, err := r.redis.Incr(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+	if count == 1 {
+		r.redis.Expire(ctx, key, bucketTTL)
+	}
+	if count > r.ipRateLimitRPM {
+		return apperrors.ErrTooManyRequests
+	}
+	return nil
+}
+
 func (r *RedisRateLimiter) CheckAndUpdateState(ctx context.Context, apiTokenID int64, stateSvc *TokenStateService) error {
 	peak, err := r.GetPeakConcurrent(ctx, apiTokenID)
 	if err != nil {
@@ -117,9 +155,18 @@ func (r *RedisRateLimiter) CheckAndUpdateState(ctx context.Context, apiTokenID i
 	}
 
 	threshold := peak * int64(r.thresholdMultiplier)
-	if requestCount > threshold {
-		_, err = stateSvc.TransitionState(ctx, apiTokenID)
+	if requestCount <= threshold {
+		return nil
+	}
+
+	newState, err := stateSvc.TransitionState(ctx, apiTokenID, requestCount)
+	if err != nil {
 		return err
+	}
+
+	if newState == model.StateWarning {
+		warnKey := warningKeyPrefix + fmt.Sprint(apiTokenID)
+		r.redis.Set(ctx, warnKey, 1, r.warningTTL)
 	}
 	return nil
 }
