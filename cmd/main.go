@@ -18,6 +18,7 @@ import (
 	logrepository "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/repository"
 	logservice "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/service"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/middleware"
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/notifier"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/queue"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/requester"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/validator"
@@ -72,7 +73,8 @@ func main() {
 		logger.Warn("rate limit 비활성화 상태로 실행 중")
 		rateLimiter = service.NewNoopRateLimiter()
 	}
-	tokenStateSvc := service.NewTokenStateService(tokenRepo, cacheService, logger)
+	ntfyNotifier := notifier.New(cfg.Ntfy, cfg.Server.PublicURL)
+	tokenStateSvc := service.NewTokenStateService(tokenRepo, cacheService, ntfyNotifier, logger)
 
 	pipeline := service.NewPipeline(
 		tokenQuery, usageQuery, httpRequester,
@@ -102,13 +104,14 @@ func main() {
 		logger, cfg.Server, cfg.Stream,
 	)
 	healthHandler := handler.NewHealthHandler(healthSvc)
+	webhookHandler := handler.NewWebhookHandler(tokenStateSvc, cfg.Ntfy.WebhookSecret, logger)
 
 	// --- 미들웨어 ---
 	queueMW := middleware.NewQueueMiddleware(requestQueue, streamQueue, prioritySvc, logger)
 	errorMW := middleware.NewErrorMiddleware(logger)
 
 	// --- Gin 라우터 ---
-	r := newRouter(cfg, queueMW, errorMW, proxyHandler, healthHandler)
+	r := newRouter(cfg, queueMW, errorMW, proxyHandler, healthHandler, webhookHandler)
 
 	// --- 서버 시작 및 Graceful Shutdown ---
 	srv := &http.Server{
@@ -146,14 +149,18 @@ func newRouter(
 	errorMW *middleware.ErrorMiddleware,
 	proxyHandler *handler.ProxyHandler,
 	healthHandler *handler.HealthHandler,
+	webhookHandler *handler.WebhookHandler,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(newCORSMiddleware(cfg.CORS))
 	r.Use(errorMW.Handle)
-	r.Use(queueMW.Handle)
+
+	// 웹훅은 큐 미들웨어 없이 직접 처리
+	r.POST("/webhook/api/token/:tokenId/block", webhookHandler.BlockToken)
 
 	r.POST("/healthy", healthHandler.Check)
+	r.Use(queueMW.Handle)
 	r.NoRoute(proxyHandler.Handle)
 
 	return r
