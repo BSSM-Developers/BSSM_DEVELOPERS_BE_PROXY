@@ -6,6 +6,8 @@ import (
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/cache"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/model"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/repository"
+	userrepo "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/user/repository"
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/mailclient"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/notifier"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -17,11 +19,20 @@ type TokenStateService struct {
 	repo     repository.TokenRepository
 	cache    cache.Service
 	notifier notifier.Notifier
+	userRepo *userrepo.UserRepository
+	mail     *mailclient.MailClient
 	logger   *zap.Logger
 }
 
-func NewTokenStateService(repo repository.TokenRepository, cache cache.Service, n notifier.Notifier, logger *zap.Logger) *TokenStateService {
-	return &TokenStateService{repo: repo, cache: cache, notifier: n, logger: logger}
+func NewTokenStateService(
+	repo repository.TokenRepository,
+	cache cache.Service,
+	n notifier.Notifier,
+	userRepo *userrepo.UserRepository,
+	mail *mailclient.MailClient,
+	logger *zap.Logger,
+) *TokenStateService {
+	return &TokenStateService{repo: repo, cache: cache, notifier: n, userRepo: userRepo, mail: mail, logger: logger}
 }
 
 // TransitionState는 현재 상태에서 다음 단계로 전환한다.
@@ -78,6 +89,11 @@ func (s *TokenStateService) TransitionState(ctx context.Context, apiTokenID int6
 				)
 			}
 		}()
+		go s.sendTokenStateEmail(context.Background(), token, "WARNING")
+	}
+
+	if next == model.StateBlocked {
+		go s.sendTokenStateEmail(context.Background(), token, "BLOCKED")
 	}
 
 	return next, nil
@@ -103,6 +119,7 @@ func (s *TokenStateService) ForceBlock(ctx context.Context, apiTokenID int64) er
 		zap.Int64("apiTokenId", apiTokenID),
 		zap.String("tokenName", token.ApiTokenName),
 	)
+	go s.sendTokenStateEmail(context.Background(), token, "BLOCKED")
 	return nil
 }
 
@@ -114,4 +131,27 @@ func (s *TokenStateService) RecoverToNormal(ctx context.Context, token *model.Ap
 		return err
 	}
 	return s.cache.Evict(ctx, cache.ApiTokenKey(token.ApiTokenUUID))
+}
+
+func (s *TokenStateService) sendTokenStateEmail(ctx context.Context, token *model.ApiToken, state string) {
+	email, err := s.userRepo.FindEmailByUserID(ctx, token.UserID)
+	if err != nil {
+		s.logger.Warn("토큰 소유자 이메일 조회 실패",
+			zap.Int64("apiTokenId", token.ApiTokenID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	var subject, body string
+	switch state {
+	case "WARNING":
+		subject = "[BSSM Developers] API 토큰 과다 사용 경고"
+		body = "안녕하세요.\n\nAPI 토큰 '" + token.ApiTokenName + "'이 과도한 요청으로 WARNING 상태로 전환되었습니다.\n\n요청량을 줄이지 않으면 토큰이 차단될 수 있습니다.\n\n감사합니다."
+	case "BLOCKED":
+		subject = "[BSSM Developers] API 토큰 차단 안내"
+		body = "안녕하세요.\n\nAPI 토큰 '" + token.ApiTokenName + "'이 차단되었습니다.\n\n차단 해제를 원하시면 관리자에게 해제 요청을 제출해 주세요.\n\n감사합니다."
+	}
+
+	s.mail.Send(ctx, email, subject, body)
 }

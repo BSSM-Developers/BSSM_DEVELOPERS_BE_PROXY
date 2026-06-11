@@ -8,17 +8,23 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig
-	MySQL     MySQLConfig
-	Redis     RedisConfig
-	MongoDB   MongoDBConfig
-	Cache     CacheConfig
-	Log       LogConfig
-	Queue     QueueConfig
-	Stream    StreamConfig
-	RateLimit RateLimitConfig
-	CORS      CORSConfig
-	Ntfy      NtfyConfig
+	Server      ServerConfig
+	MySQL       MySQLConfig
+	Redis       RedisConfig
+	MongoDB     MongoDBConfig
+	Cache       CacheConfig
+	Log         LogConfig
+	Queue       QueueConfig
+	Stream      StreamConfig
+	RateLimit   RateLimitConfig
+	CORS        CORSConfig
+	Ntfy        NtfyConfig
+	MailService MailServiceConfig
+}
+
+type MailServiceConfig struct {
+	URL     string `mapstructure:"url"`
+	Enabled bool   `mapstructure:"enabled"`
 }
 
 type LogConfig struct {
@@ -183,6 +189,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("ntfy.topic", "bssm-developers-blocked")
 	v.SetDefault("ntfy.webhook_secret", "")
 	v.SetDefault("server.public_url", "http://localhost:8080")
+
+	v.SetDefault("mail_service.enabled", false)
+	v.SetDefault("mail_service.url", "http://localhost:8091")
 
 	v.SetDefault("cors.allowed_origins", []string{
 		"https://bssmdev.com",
