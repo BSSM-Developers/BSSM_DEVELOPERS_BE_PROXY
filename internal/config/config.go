@@ -143,6 +143,7 @@ func bindEnvs(v *viper.Viper) {
 		"rate_limit.warning_ttl", "rate_limit.ip_rate_limit_rpm",
 		"ntfy.enabled", "ntfy.server_url", "ntfy.topic", "ntfy.webhook_secret",
 		"cors.allowed_origins",
+		"mail_service.enabled", "mail_service.url",
 	}
 	for _, k := range keys {
 		_ = v.BindEnv(k)
