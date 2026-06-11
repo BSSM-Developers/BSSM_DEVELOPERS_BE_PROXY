@@ -101,6 +101,9 @@ func Load() *Config {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	// Viper bug: AutomaticEnv + Unmarshal 중첩 키 미동작 → 명시적 바인딩
+	bindEnvs(v)
+
 	setDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -115,6 +118,29 @@ func Load() *Config {
 		panic("config unmarshal error: " + err.Error())
 	}
 	return cfg
+}
+
+func bindEnvs(v *viper.Viper) {
+	keys := []string{
+		"server.port", "server.max_body_bytes", "server.public_url",
+		"mysql.dsn", "mysql.max_open_conns", "mysql.max_idle_conns", "mysql.conn_max_lifetime",
+		"redis.addr", "redis.password", "redis.db", "redis.pool_size",
+		"mongodb.uri", "mongodb.database",
+		"cache.local_ttl", "cache.redis_ttl",
+		"log.workers", "log.level",
+		"queue.max_inflight", "queue.acquire_timeout",
+		"queue.base_priority", "queue.priority_increment", "queue.max_priority",
+		"stream.queue.max_inflight", "stream.queue.acquire_timeout",
+		"stream.queue.base_priority", "stream.queue.priority_increment", "stream.queue.max_priority",
+		"stream.max_bytes_per_conn", "stream.max_duration",
+		"rate_limit.enabled", "rate_limit.threshold_multiplier",
+		"rate_limit.warning_ttl", "rate_limit.ip_rate_limit_rpm",
+		"ntfy.enabled", "ntfy.server_url", "ntfy.topic", "ntfy.webhook_secret",
+		"cors.allowed_origins",
+	}
+	for _, k := range keys {
+		_ = v.BindEnv(k)
+	}
 }
 
 func setDefaults(v *viper.Viper) {
