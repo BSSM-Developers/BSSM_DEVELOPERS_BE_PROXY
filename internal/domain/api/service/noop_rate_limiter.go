@@ -26,6 +26,18 @@ func (n *NoopRateLimiter) GetConcurrent(_ context.Context, _ int64) (int64, erro
 	return 0, nil
 }
 
+func (n *NoopRateLimiter) GetPeakConcurrent(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
+}
+
+func (n *NoopRateLimiter) IsWarningActive(_ context.Context, _ int64) (bool, error) {
+	return false, nil
+}
+
+func (n *NoopRateLimiter) CheckClientIP(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 func (n *NoopRateLimiter) CheckAndUpdateState(_ context.Context, _ int64, _ *TokenStateService) error {
 	return nil
 }

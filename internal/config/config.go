@@ -18,6 +18,7 @@ type Config struct {
 	Stream    StreamConfig
 	RateLimit RateLimitConfig
 	CORS      CORSConfig
+	Ntfy      NtfyConfig
 }
 
 type LogConfig struct {
@@ -28,6 +29,7 @@ type LogConfig struct {
 type ServerConfig struct {
 	Port        string `mapstructure:"port"`
 	MaxBodyBytes int64  `mapstructure:"max_body_bytes"`
+	PublicURL   string `mapstructure:"public_url"`
 }
 
 type MySQLConfig struct {
@@ -69,12 +71,21 @@ type StreamConfig struct {
 }
 
 type RateLimitConfig struct {
-	Enabled             bool `mapstructure:"enabled"`
-	ThresholdMultiplier int  `mapstructure:"threshold_multiplier"`
+	Enabled             bool          `mapstructure:"enabled"`
+	ThresholdMultiplier int           `mapstructure:"threshold_multiplier"`
+	WarningTTL          time.Duration `mapstructure:"warning_ttl"`
+	IPRateLimitRPM      int64         `mapstructure:"ip_rate_limit_rpm"`
 }
 
 type CORSConfig struct {
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
+}
+
+type NtfyConfig struct {
+	Enabled       bool   `mapstructure:"enabled"`
+	ServerURL     string `mapstructure:"server_url"`
+	Topic         string `mapstructure:"topic"`
+	WebhookSecret string `mapstructure:"webhook_secret"`
 }
 
 func Load() *Config {
@@ -90,6 +101,9 @@ func Load() *Config {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	// Viper bug: AutomaticEnv + Unmarshal 중첩 키 미동작 → 명시적 바인딩
+	bindEnvs(v)
+
 	setDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -104,6 +118,29 @@ func Load() *Config {
 		panic("config unmarshal error: " + err.Error())
 	}
 	return cfg
+}
+
+func bindEnvs(v *viper.Viper) {
+	keys := []string{
+		"server.port", "server.max_body_bytes", "server.public_url",
+		"mysql.dsn", "mysql.max_open_conns", "mysql.max_idle_conns", "mysql.conn_max_lifetime",
+		"redis.addr", "redis.password", "redis.db", "redis.pool_size",
+		"mongodb.uri", "mongodb.database",
+		"cache.local_ttl", "cache.redis_ttl",
+		"log.workers", "log.level",
+		"queue.max_inflight", "queue.acquire_timeout",
+		"queue.base_priority", "queue.priority_increment", "queue.max_priority",
+		"stream.queue.max_inflight", "stream.queue.acquire_timeout",
+		"stream.queue.base_priority", "stream.queue.priority_increment", "stream.queue.max_priority",
+		"stream.max_bytes_per_conn", "stream.max_duration",
+		"rate_limit.enabled", "rate_limit.threshold_multiplier",
+		"rate_limit.warning_ttl", "rate_limit.ip_rate_limit_rpm",
+		"ntfy.enabled", "ntfy.server_url", "ntfy.topic", "ntfy.webhook_secret",
+		"cors.allowed_origins",
+	}
+	for _, k := range keys {
+		_ = v.BindEnv(k)
+	}
 }
 
 func setDefaults(v *viper.Viper) {
@@ -138,6 +175,14 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.threshold_multiplier", 200)
+	v.SetDefault("rate_limit.warning_ttl", 5*time.Minute)
+	v.SetDefault("rate_limit.ip_rate_limit_rpm", int64(120))
+
+	v.SetDefault("ntfy.enabled", false)
+	v.SetDefault("ntfy.server_url", "https://ntfy.sh")
+	v.SetDefault("ntfy.topic", "bssm-developers-blocked")
+	v.SetDefault("ntfy.webhook_secret", "")
+	v.SetDefault("server.public_url", "http://localhost:8080")
 
 	v.SetDefault("cors.allowed_origins", []string{
 		"https://bssmdev.com",

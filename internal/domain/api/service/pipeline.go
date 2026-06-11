@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/model"
@@ -18,7 +20,7 @@ import (
 type TokenValidator func(ctx context.Context, token *model.ApiToken) error
 
 // Pipeline은 프록시 요청의 공통 실행 흐름을 정의한다.
-// 토큰 조회 → 접근 검증 → 차단 확인 → 사용량 조회 → 외부 API 호출 → 로그 발행
+// 토큰 조회 → WARNING 복구 → 접근 검증 → 차단 확인 → IP 체크 → 사용량 조회 → 외부 API 호출 → 로그 발행
 // Java의 ApiProxyPipeline에 대응한다.
 type Pipeline struct {
 	tokenQuery   *query.TokenQueryService
@@ -64,13 +66,22 @@ func (p *Pipeline) Execute(
 		return nil, err
 	}
 
+	// WARNING TTL 만료 시 NORMAL 자동복구
+	p.tracker.tryRecoverWarning(ctx, token)
+
 	// 접근 방식별 검증 (브라우저: Origin, 서버: SecretKey)
 	if err := validator(ctx, token); err != nil {
 		return nil, err
 	}
 
-	// 차단 상태 확인
+	// 차단 상태 확인 (관리자 수동 BLOCKED만 해당)
 	if err := token.ValidateNotBlocked(); err != nil {
+		return nil, err
+	}
+
+	// IP 단위 rate limit — 공격자 IP 차단, 동일 토큰 정상 유저 보호
+	clientIP := extractClientIP(r)
+	if err := p.tracker.checkClientIP(ctx, token.ApiTokenID, clientIP); err != nil {
 		return nil, err
 	}
 
@@ -98,3 +109,21 @@ func (p *Pipeline) Execute(
 	return resp, nil
 }
 
+// extractClientIP는 X-Forwarded-For → X-Real-IP → RemoteAddr 순으로 클라이언트 IP를 추출한다.
+// 서비스가 X-Forwarded-For를 전달하면 실제 최종 사용자 IP로 추적된다.
+func extractClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
