@@ -15,8 +15,10 @@ import (
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/query"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/repository"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/api/service"
+	userrepository "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/domain/user/repository"
 	logrepository "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/repository"
 	logservice "github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/log/service"
+	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/mailclient"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/middleware"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/notifier"
 	"github.com/BSSM-Developers/BSSM_DEVELOPERS_BE_PROXY/internal/queue"
@@ -74,7 +76,14 @@ func main() {
 		rateLimiter = service.NewNoopRateLimiter()
 	}
 	ntfyNotifier := notifier.New(cfg.Ntfy, cfg.Server.PublicURL)
-	tokenStateSvc := service.NewTokenStateService(tokenRepo, cacheService, ntfyNotifier, logger)
+	userRepo := userrepository.NewUserRepository(db)
+	var mailClient *mailclient.MailClient
+	if cfg.MailService.Enabled {
+		mailClient = mailclient.New(cfg.MailService.URL, logger)
+	} else {
+		mailClient = mailclient.NewNoop(logger)
+	}
+	tokenStateSvc := service.NewTokenStateService(tokenRepo, cacheService, ntfyNotifier, userRepo, mailClient, logger)
 
 	pipeline := service.NewPipeline(
 		tokenQuery, usageQuery, httpRequester,
