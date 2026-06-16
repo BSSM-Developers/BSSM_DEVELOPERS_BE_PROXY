@@ -30,9 +30,9 @@ var hopByHopHeaders = map[string]struct{}{
 	"upgrade":             {},
 }
 
-// excludedResponseHeaders는 CORS 처리를 위해 제거하는 응답 헤더다.
-// 프록시 서버가 별도로 CORS를 관리하므로 업스트림 CORS 헤더는 제거한다.
+// excludedResponseHeaders는 CORS 처리 및 백엔드 인프라 정보 노출 방지를 위해 제거하는 응답 헤더다.
 var excludedResponseHeaders = map[string]struct{}{
+	// CORS — 프록시가 직접 관리
 	"access-control-allow-origin":      {},
 	"access-control-allow-credentials": {},
 	"access-control-allow-headers":     {},
@@ -41,6 +41,14 @@ var excludedResponseHeaders = map[string]struct{}{
 	"access-control-max-age":           {},
 	"vary":                             {},
 	"content-disposition":              {},
+	// 백엔드 인프라 노출 차단
+	"server":          {},
+	"x-powered-by":    {},
+	"location":        {},
+	"x-forwarded-for": {},
+	"x-real-ip":       {},
+	"forwarded":       {},
+	"via":             {},
 }
 
 // ProxyResponse는 버퍼링된 외부 API 응답을 담는 구조체다.
